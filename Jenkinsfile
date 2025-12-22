@@ -42,7 +42,7 @@ pipeline {
             steps {
                 echo 'Сборка restaurant_api_contracts...'
                 dir('restaurant_api_contracts') {
-                    sh 'chmod +x mvnw && ./mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                    sh 'chmod +x mvnw && ./mvnw clean install -DskipTests || mvn clean install -DskipTests'
                 }
                 // Устанавливаем в локальный репозиторий для использования другими модулями
                 script {
