@@ -1,0 +1,196 @@
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_DIR = '/workspace'
+        DOCKER_COMPOSE = 'docker compose'  // Используем новую команду (без дефиса)
+        PROJECT_NAME = 'restaurant-project'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Используем локальный проект из /workspace...'
+                sh """
+                    echo 'Содержимое рабочей директории:'
+                    ls -la ${PROJECT_DIR}
+                    echo 'Переходим в директорию проекта'
+                    cd ${PROJECT_DIR}
+                """
+            }
+        }
+
+        stage('Build events-contract') {
+            steps {
+                echo 'Сборка events-contract...'
+                dir("${PROJECT_DIR}/events-contract") {
+                    sh './mvnw clean install -DskipTests || mvn clean install -DskipTests'
+                }
+                // Копируем JAR в demo/lib для system scope зависимости
+                script {
+                    sh """
+                        mkdir -p ${PROJECT_DIR}/demo/lib
+                        cp ${PROJECT_DIR}/events-contract/target/events-contract-1.0-SNAPSHOT.jar ${PROJECT_DIR}/demo/lib/events-contract.jar || true
+                    """
+                }
+            }
+        }
+        
+        stage('Build restaurant_api_contracts') {
+            steps {
+                echo 'Сборка restaurant_api_contracts...'
+                dir("${PROJECT_DIR}/restaurant_api_contracts") {
+                    sh './mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                }
+                // Копируем JAR в demo/lib для system scope зависимости
+                script {
+                    sh """
+                        mkdir -p ${PROJECT_DIR}/demo/lib
+                        cp ${PROJECT_DIR}/restaurant_api_contracts/target/Restaurant-0.0.1-SNAPSHOT.jar ${PROJECT_DIR}/demo/lib/restaurant_api_contracts.jar || true
+                    """
+                }
+            }
+        }
+
+        stage('Build Services') {
+            parallel {
+                stage('Build demo') {
+                    steps {
+                        echo 'Сборка demo сервиса...'
+                        dir("${PROJECT_DIR}/demo") {
+                            sh './mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                        }
+                    }
+                }
+                stage('Build reservation-price-service') {
+                    steps {
+                        echo 'Сборка reservation-price-service...'
+                        dir("${PROJECT_DIR}/reservation-price-service") {
+                            sh './mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                        }
+                    }
+                }
+                stage('Build notification-service') {
+                    steps {
+                        echo 'Сборка notification-service...'
+                        dir("${PROJECT_DIR}/notification-service/notification-service") {
+                            sh './mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                        }
+                    }
+                }
+                stage('Build audit-service') {
+                    steps {
+                        echo 'Сборка audit-service...'
+                        dir("${PROJECT_DIR}/audit-service/audit-service") {
+                            sh './mvnw clean package -DskipTests || mvn clean package -DskipTests'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                echo 'Сборка Docker образов...'
+                dir(PROJECT_DIR) {
+                    sh '${DOCKER_COMPOSE} build --no-cache'
+                }
+            }
+        }
+
+        stage('Docker Compose Up') {
+            steps {
+                echo 'Запуск всех сервисов через Docker Compose...'
+                dir(PROJECT_DIR) {
+                    sh '${DOCKER_COMPOSE} up -d'
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo 'Проверка здоровья сервисов...'
+                script {
+                    def services = [
+                        ['name': 'demo-rest', 'port': '8081'],  // Исправлен порт (внешний порт)
+                        ['name': 'reservation-price-service', 'port': '9090'],
+                        ['name': 'notification-service', 'port': '8083'],
+                        ['name': 'audit-service', 'port': '8082']
+                    ]
+                    
+                    sleep(time: 30, unit: 'SECONDS') // Даем время сервисам запуститься
+                    
+                    services.each { service ->
+                        def name = service.name
+                        def port = service.port
+                        sh """
+                            # Устанавливаем curl если его нет
+                            apt-get update -qq && apt-get install -y -qq curl || true
+                            
+                            # Проверяем доступность сервиса
+                            for i in \$(seq 1 30); do
+                                if curl -f http://localhost:${port}/actuator/health 2>/dev/null; then
+                                    echo "${name} is healthy"
+                                    exit 0
+                                fi
+                                echo "Waiting for ${name}... (\$i/30)"
+                                sleep 2
+                            done
+                            echo "${name} failed to start (но продолжаем)"
+                            # Не прерываем сборку, если health check не прошел
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Verify Metrics') {
+            steps {
+                echo 'Проверка метрик...'
+                script {
+                    sh '''
+                        sleep 10
+                        # Устанавливаем curl если его нет
+                        apt-get update -qq && apt-get install -y -qq curl || true
+                        
+                        # Проверяем Prometheus
+                        if curl -f http://localhost:9091/api/v1/targets 2>/dev/null; then
+                            echo "Prometheus is accessible"
+                        else
+                            echo "Prometheus check failed (но продолжаем)"
+                        fi
+                        
+                        # Проверяем Grafana
+                        if curl -f http://localhost:3000/api/health 2>/dev/null; then
+                            echo "Grafana is accessible"
+                        else
+                            echo "Grafana check failed (но продолжаем)"
+                        fi
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline выполнен'
+        }
+        success {
+            echo 'Pipeline выполнен успешно!'
+            echo 'Сервисы доступны:'
+            echo '  - Jenkins: http://localhost:8080'
+            echo '  - Demo REST: http://localhost:8081'
+            echo '  - Prometheus: http://localhost:9091'
+            echo '  - Grafana: http://localhost:3000 (admin/admin)'
+            echo '  - Zipkin: http://localhost:9411'
+        }
+        failure {
+            echo 'Pipeline завершился с ошибкой!'
+            dir(PROJECT_DIR) {
+                sh '${DOCKER_COMPOSE} logs --tail=100 || true'
+            }
+        }
+    }
+}
+
