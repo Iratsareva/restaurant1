@@ -105,12 +105,16 @@ pipeline {
                 echo 'Сборка Docker образов...'
                 script {
                     // Проверяем доступность Docker
-                    def dockerAvailable = sh(script: 'which docker || which docker-compose', returnStatus: true) == 0
+                    def dockerAvailable = sh(script: 'docker --version && docker info', returnStatus: true) == 0
                     if (dockerAvailable) {
                         sh '${DOCKER_COMPOSE} build --no-cache'
                     } else {
-                        echo 'Docker не доступен в Jenkins контейнере. Пропускаем сборку образов.'
-                        echo 'Для полной интеграции установите Docker в Jenkins или используйте внешний Docker daemon.'
+                        echo 'Docker daemon недоступен в Jenkins контейнере.'
+                        echo 'Убедитесь, что:'
+                        echo '1. Docker Desktop запущен на хосте'
+                        echo '2. /var/run/docker.sock смонтирован в Jenkins контейнер'
+                        echo '3. Jenkins имеет права root или privileged режим'
+                        echo 'Пропускаем сборку образов.'
                     }
                 }
             }
@@ -119,12 +123,12 @@ pipeline {
         stage('Docker Compose Up') {
             steps {
                 script {
-                    def dockerAvailable = sh(script: 'which docker || which docker-compose', returnStatus: true) == 0
+                    def dockerAvailable = sh(script: 'docker --version && docker info', returnStatus: true) == 0
                     if (dockerAvailable) {
                         echo 'Запуск всех сервисов через Docker Compose...'
                         sh '${DOCKER_COMPOSE} up -d'
                     } else {
-                        echo 'Docker не доступен. Пропускаем запуск сервисов.'
+                        echo 'Docker daemon недоступен. Пропускаем запуск сервисов.'
                     }
                 }
             }
@@ -133,7 +137,7 @@ pipeline {
         stage('Health Check') {
             steps {
                 script {
-                    def dockerAvailable = sh(script: 'which docker || which docker-compose', returnStatus: true) == 0
+                    def dockerAvailable = sh(script: 'docker --version && docker info', returnStatus: true) == 0
                     if (dockerAvailable) {
                         echo 'Проверка здоровья сервисов...'
                         def services = [
@@ -166,7 +170,7 @@ pipeline {
                             """
                         }
                     } else {
-                        echo 'Docker не доступен. Пропускаем проверку здоровья.'
+                        echo 'Docker daemon недоступен. Пропускаем проверку здоровья.'
                     }
                 }
             }
@@ -175,7 +179,7 @@ pipeline {
         stage('Verify Metrics') {
             steps {
                 script {
-                    def dockerAvailable = sh(script: 'which docker || which docker-compose', returnStatus: true) == 0
+                    def dockerAvailable = sh(script: 'docker --version && docker info', returnStatus: true) == 0
                     if (dockerAvailable) {
                         echo 'Проверка метрик...'
                         sh '''
@@ -198,7 +202,7 @@ pipeline {
                             fi
                         '''
                     } else {
-                        echo 'Docker не доступен. Пропускаем проверку метрик.'
+                        echo 'Docker daemon недоступен. Пропускаем проверку метрик.'
                     }
                 }
             }
