@@ -59,28 +59,15 @@ services:
 
   # CI/CD: Jenkins
   jenkins:
-    image: jenkins/jenkins:lts
+    build: ./jenkins-dockerfile
+    user: root
     ports:
       - "8088:8080"
-      - "50000:50000"
-    environment:
-      - JENKINS_OPTS=--httpPort=8080
     volumes:
       - jenkins_home:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock  # Доступ к Docker socket
-      - ./:/workspace  # Монтируем проект в Jenkins
-    user: root  # Для доступа к Docker socket и volume
-    privileged: true  # Для Docker socket доступа
-    command: >
-      bash -c "
-      apt-get update &&
-      apt-get install -y docker.io docker-compose &&
-      /usr/local/bin/jenkins.sh
-      "
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - microservices-net
-    depends_on:
-      - rabbitmq
 
   # Микросервисы
   reservation-price-service:
