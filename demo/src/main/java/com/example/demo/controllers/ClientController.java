@@ -7,8 +7,6 @@ import com.example.Restaurant.endpoints.ClientApi;
 import com.example.demo.assembler.ClientModelAssembler;
 
 import com.example.demo.service.ClientService;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Timer;
 import org.springframework.hateoas.CollectionModel;
 import org.springframework.hateoas.EntityModel;
 import org.springframework.hateoas.PagedModel;
@@ -21,23 +19,15 @@ import java.net.URI;
 public class ClientController implements ClientApi {
     private final ClientService clientService;
     private final ClientModelAssembler assembler;
-    private final Counter clientRequestsCounter;
-    private final Timer clientOperationsTimer;
 
-    public ClientController(ClientService clientService, ClientModelAssembler assembler,
-                           Counter clientRequestsCounter, Timer clientOperationsTimer) {
+    public ClientController(ClientService clientService, ClientModelAssembler assembler) {
         this.clientService = clientService;
         this.assembler = assembler;
-        this.clientRequestsCounter = clientRequestsCounter;
-        this.clientOperationsTimer = clientOperationsTimer;
     }
 
     @Override
     public CollectionModel<EntityModel<ClientResponse>> getAllClients() {
-        return clientOperationsTimer.recordCallable(() -> {
-            clientRequestsCounter.increment();
-            return assembler.toCollectionModel(clientService.findAll());
-        });
+        return assembler.toCollectionModel(clientService.findAll());
     }
 
     @Override
@@ -47,13 +37,10 @@ public class ClientController implements ClientApi {
 
     @Override
     public ResponseEntity<EntityModel<ClientResponse>> createClient(ClientRequest request) {
-        return clientOperationsTimer.recordCallable(() -> {
-            clientRequestsCounter.increment();
-            ClientResponse created = clientService.create(request);
-            EntityModel<ClientResponse> model = assembler.toModel(created);
-            return ResponseEntity.created(model.getRequiredLink("self").toUri())
-                    .body(model);
-        });
+        ClientResponse created = clientService.create(request);
+        EntityModel<ClientResponse> model = assembler.toModel(created);
+        return ResponseEntity.created(model.getRequiredLink("self").toUri())
+                .body(model);
     }
 
     @Override
