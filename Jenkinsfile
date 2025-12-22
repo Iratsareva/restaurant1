@@ -125,8 +125,21 @@ pipeline {
                 script {
                     def dockerAvailable = sh(script: 'docker --version && docker info', returnStatus: true) == 0
                     if (dockerAvailable) {
+                        echo 'Проверка и остановка существующих контейнеров...'
+                        sh '''
+                            if ${DOCKER_COMPOSE} ps | grep -q "Up"; then
+                                echo "Найдены запущенные контейнеры, останавливаю..."
+                                ${DOCKER_COMPOSE} down || true
+                            else
+                                echo "Контейнеры не запущены"
+                            fi
+                        '''
+
                         echo 'Запуск всех сервисов через Docker Compose...'
-                        sh '${DOCKER_COMPOSE} up -d'
+                        sh '${DOCKER_COMPOSE} up -d --build --force-recreate'
+
+                        echo 'Ожидание запуска сервисов...'
+                        sleep(time: 15, unit: 'SECONDS')
                     } else {
                         echo 'Docker daemon недоступен. Пропускаем запуск сервисов.'
                     }
@@ -211,7 +224,7 @@ pipeline {
 
     post {
         always {
-            echo 'Очистка...'
+            echo 'Очистка после тестирования...'
             sh '${DOCKER_COMPOSE} down || true'
         }
         success {
