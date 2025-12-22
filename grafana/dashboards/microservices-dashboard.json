@@ -9,7 +9,7 @@
     "panels": [
       {
         "id": 1,
-        "title": "HTTP Requests Total",
+        "title": "HTTP Requests Rate",
         "type": "graph",
         "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
         "targets": [
@@ -21,6 +21,68 @@
         ],
         "yaxes": [
           {"format": "short", "label": "Requests/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Total Requests by Type",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(restaurant_client_requests_total)",
+            "legendFormat": "Client Requests",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(restaurant_reservation_requests_total)",
+            "legendFormat": "Reservation Requests",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(restaurant_table_requests_total)",
+            "legendFormat": "Table Requests",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Request Duration by Operation",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(restaurant_client_operations_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "Client Operations",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(restaurant_reservation_operations_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "Reservation Operations",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(restaurant_table_operations_duration_seconds_bucket[5m])) by (le))",
+            "legendFormat": "Table Operations",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Duration (95th percentile)"},
           {"format": "short"}
         ]
       },
@@ -90,6 +152,38 @@
         ],
         "yaxes": [
           {"format": "short", "label": "Messages/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Request Count Over Time",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "increase(restaurant_client_requests_total[5m])",
+            "legendFormat": "Client Requests",
+            "refId": "A"
+          },
+          {
+            "expr": "increase(restaurant_reservation_requests_total[5m])",
+            "legendFormat": "Reservation Requests",
+            "refId": "B"
+          },
+          {
+            "expr": "increase(restaurant_table_requests_total[5m])",
+            "legendFormat": "Table Requests",
+            "refId": "C"
+          },
+          {
+            "expr": "increase(http_server_requests_seconds_count[5m])",
+            "legendFormat": "HTTP Requests",
+            "refId": "D"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "label": "Request Count"},
           {"format": "short"}
         ]
       }
