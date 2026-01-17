@@ -10,6 +10,7 @@ public record ReservationCreatedEvent(
         String clientName,
         Long tableId,
         String tableNumber,
+        String tableType,  // Добавлено для расчета цены
         LocalDateTime reservationTime,
         int numberOfGuests
 ) implements Serializable {}

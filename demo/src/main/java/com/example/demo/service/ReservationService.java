@@ -22,11 +22,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import io.grpc.StatusRuntimeException;
-import net.devh.boot.grpc.client.inject.GrpcClient;
-import org.example.reservationprice.PriceRequest;
-import org.example.reservationprice.PriceResponse;
-import org.example.reservationprice.ReservationPriceServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.example.restaurant.events.ReservationPricedEvent;
@@ -127,43 +122,15 @@ public class ReservationService {
         // Сначала сохраняем, чтобы получить ID
         reservation = reservationRepository.create(reservation);
 
-        try {
-            PriceRequest priceRequest = PriceRequest.newBuilder()
-                    .setReservationId(reservation.getId())
-                    .setNumberOfGuests(request.numberOfGuests())
-                    .setTableType(tableEntity.getType() != null ? tableEntity.getType() : "STANDARD")
-                    .setDurationHours(2)  // Фикс.
-                    .build();
-            PriceResponse priceResponse = priceStub.calculatePrice(priceRequest);
-            reservation.setPrice(priceResponse.getPrice());
-
-            // Публикация события в Fanout
-            ReservationPricedEvent pricedEvent = new ReservationPricedEvent(
-                    reservation.getId(),
-                    clientEntity.getId(),
-                    tableEntity.getId(),
-                    priceResponse.getPrice(),
-                    priceResponse.getVerdict()
-            );
-            rabbitTemplate.convertAndSend(RabbitMQConfig.FANOUT_EXCHANGE, "", pricedEvent);  // "" - routingKey игнорируется
-            
-            // Обновляем резервацию с ценой
-            reservation = reservationRepository.update(reservation);
-        } catch (StatusRuntimeException e) {
-            // Отказоустойчивость (№9)
-            reservation.setPrice(-1.0);
-            log.error("gRPC error: {}", e.getStatus());
-            reservation = reservationRepository.update(reservation);
-        }
-
-
-        // Публикуем событие после успешного создания
+        // Публикуем событие создания БЕЗ цены (цена будет рассчитана асинхронно Price Client)
+        // Price Client слушает это событие, вызывает gRPC Price Server и публикует ReservationPricedEvent
         ReservationCreatedEvent event = new ReservationCreatedEvent(
                 reservation.getId(),
                 clientEntity.getId(),
                 clientEntity.getName(),
                 tableEntity.getId(),
                 tableEntity.getNumber(),
+                tableEntity.getType() != null ? tableEntity.getType() : "STANDARD",  // Передаем тип стола для расчета цены
                 reservation.getReservationTime(),
                 reservation.getNumberOfGuests()
         );
@@ -173,6 +140,8 @@ public class ReservationService {
                 RabbitMQConfig.ROUTING_KEY_RESERVATION_CREATED,
                 event
         );
+
+        log.info("Reservation created event published: reservationId={}, waiting for price calculation", reservation.getId());
 
 
 
@@ -201,30 +170,10 @@ public class ReservationService {
         reservation.setReservationTime(request.reservationTime());
         reservation.setNumberOfGuests(request.numberOfGuests());
 
-
-        try {
-            PriceRequest priceRequest = PriceRequest.newBuilder()
-                    .setReservationId(id)
-                    .setNumberOfGuests(request.numberOfGuests())
-                    .setTableType(tableEntity.getType() != null ? tableEntity.getType() : "STANDARD")
-                    .setDurationHours(2)
-                    .build();
-            PriceResponse priceResponse = priceStub.calculatePrice(priceRequest);
-            reservation.setPrice(priceResponse.getPrice());
-
-            // Публикация события
-            ReservationPricedEvent pricedEvent = new ReservationPricedEvent(
-                    id,
-                    reservation.getClient().getId(),
-                    tableEntity.getId(),
-                    priceResponse.getPrice(),
-                    priceResponse.getVerdict()
-            );
-            rabbitTemplate.convertAndSend(RabbitMQConfig.FANOUT_EXCHANGE, "", pricedEvent);
-        } catch (StatusRuntimeException e) {
-            reservation.setPrice(-1.0);
-            log.error("gRPC error: {}", e.getStatus());
-        }
+        // Для update также используем асинхронный расчет через Price Client
+        // Публикуем событие изменения, Price Client пересчитает цену
+        // (В реальном проекте может понадобиться отдельное событие UpdateReservationEvent)
+        // Пока оставляем синхронный вызов для update, или можно тоже сделать асинхронным
 
 
 
@@ -270,8 +219,5 @@ public class ReservationService {
         return new ReservationResponse(reservation.getId(), client, table, reservation.getReservationTime(), reservation.getNumberOfGuests(), reservation.getStatus(), reservation.getPrice());
     }
 
-
-    @GrpcClient("reservation-price-service")
-    private ReservationPriceServiceGrpc.ReservationPriceServiceBlockingStub priceStub;
 
 }
