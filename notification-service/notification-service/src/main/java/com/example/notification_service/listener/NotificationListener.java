@@ -5,6 +5,7 @@ import com.example.notification_service.websocket.NotificationHandler;
 import org.example.restaurant.events.ReservationCreatedEvent;
 import org.example.restaurant.events.ReservationDeletedEvent;
 import org.example.restaurant.events.ReservationPricedEvent;
+import org.example.restaurant.events.ReservationStatusChangedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.Exchange;
@@ -113,6 +114,35 @@ public class NotificationListener {
             notificationHandler.broadcast(json);
         } catch (Exception e) {
             log.error("Ошибка обработки ReservationDeletedEvent", e);
+        }
+    }
+
+    /**
+     * Слушает события изменения статуса бронирования из restaurant-exchange
+     */
+    @RabbitListener(
+            bindings = @QueueBinding(
+                    value = @Queue(name = "q.notifications.reservation.status.changed", durable = "true"),
+                    exchange = @Exchange(name = "restaurant-exchange", type = "topic"),
+                    key = "reservation.status.changed"
+            )
+    )
+    public void handleReservationStatusChanged(ReservationStatusChangedEvent event) {
+        log.info("Получено событие изменения статуса бронирования: {}", event);
+
+        try {
+            Map<String, Object> message = Map.of(
+                    "type", "RESERVATION_STATUS_CHANGED",
+                    "reservationId", event.reservationId(),
+                    "clientId", event.clientId(),
+                    "oldStatus", event.oldStatus(),
+                    "newStatus", event.newStatus()
+            );
+
+            String json = objectMapper.writeValueAsString(message);
+            notificationHandler.broadcast(json);
+        } catch (Exception e) {
+            log.error("Ошибка обработки ReservationStatusChangedEvent", e);
         }
     }
 }

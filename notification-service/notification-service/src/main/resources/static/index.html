@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Система уведомлений - Ресторан</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h2 { text-align: center; color: #333; }
+        #status { text-align: center; margin-bottom: 20px; font-weight: bold; color: #dc3545; }
+        .notification { padding: 15px; margin-bottom: 10px; border-left: 5px solid; border-radius: 4px; animation: slideIn 0.5s ease-out; }
+        .verdict-GOOD { background-color: #d4edda; border-color: #28a745; color: #155724; }
+        .verdict-BAD { background-color: #f8d7da; border-color: #dc3545; color: #721c24; }
+        .type-CREATED { background-color: #d4edda; border-color: #28a745; color: #155724; }
+        .type-PRICED { background-color: #d1ecf1; border-color: #17a2b8; color: #0c5460; }
+        .type-DELETED { background-color: #fff3cd; border-color: #ffc107; color: #856404; }
+        .type-STATUS_CHANGED { background-color: #e7f3ff; border-color: #0066cc; color: #004085; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Центр уведомлений</h2>
+    <div id="status">Отключено</div>
+    <div id="notifications-area"></div>
+</div>
+
+<script>
+    const statusDiv = document.getElementById('status');
+    const area = document.getElementById('notifications-area');
+    let socket;
+
+    function connect() {
+        // Подключение к нашему новому сервису
+        socket = new WebSocket('ws://localhost:8083/ws/notifications');
+
+        socket.onopen = () => {
+            statusDiv.innerText = 'Подключено к системе событий';
+            statusDiv.style.color = '#28a745';
+        };
+
+        socket.onmessage = (event) => {
+            // Игнорируем PONG ответы
+            if (event.data === 'PONG') {
+                return;
+            }
+
+            try {
+                const data = JSON.parse(event.data);
+                console.log("Получено событие:", data);
+                showNotification(data);
+            } catch (e) {
+                console.error("Ошибка парсинга JSON:", e);
+            }
+        };
+
+        socket.onclose = () => {
+            statusDiv.innerText = 'Соединение разорвано. Переподключение...';
+            statusDiv.style.color = '#dc3545';
+            setTimeout(connect, 3000);
+        };
+
+        socket.onerror = () => {
+            console.error('Ошибка WebSocket соединения');
+        };
+    }
+
+    function showNotification(data) {
+        const div = document.createElement('div');
+        
+        if (data.type === 'RESERVATION_CREATED') {
+            div.className = 'notification type-CREATED';
+            div.innerHTML = `
+                <strong>Новое бронирование создано</strong><br>
+                ID бронирования: <b>${data.reservationId}</b><br>
+                Клиент: ${data.clientName} (ID: ${data.clientId})<br>
+                Стол: ${data.tableNumber} (ID: ${data.tableId})<br>
+                Время: ${new Date(data.reservationTime).toLocaleString('ru-RU')}<br>
+                Гостей: ${data.numberOfGuests}
+            `;
+        } else if (data.type === 'RESERVATION_PRICED') {
+            div.className = `notification type-PRICED verdict-${data.verdict}`;
+            div.innerHTML = `
+                <strong>Цена рассчитана</strong><br>
+                ID бронирования: <b>${data.reservationId}</b><br>
+                Цена: <b>${data.price.toFixed(2)} ₽</b><br>
+                Вердикт: ${data.verdict}
+            `;
+        } else if (data.type === 'RESERVATION_DELETED') {
+            div.className = 'notification type-DELETED';
+            div.innerHTML = `
+                <strong>Бронирование отменено</strong><br>
+                ID бронирования: <b>${data.reservationId}</b>
+            `;
+        } else if (data.type === 'RESERVATION_STATUS_CHANGED') {
+            div.className = 'notification type-STATUS_CHANGED';
+            const statusNames = {
+                'PENDING': 'Ожидает подтверждения',
+                'CONFIRMED': 'Подтверждено',
+                'PAID': 'Оплачено',
+                'CANCELLED': 'Отменено'
+            };
+            div.innerHTML = `
+                <strong>Статус бронирования изменен</strong><br>
+                ID бронирования: <b>${data.reservationId}</b><br>
+                Статус: ${statusNames[data.oldStatus] || data.oldStatus} → <b>${statusNames[data.newStatus] || data.newStatus}</b>
+            `;
+        }
+        
+        area.prepend(div);
+    }
+
+    connect();
+</script>
+</body>
+</html>

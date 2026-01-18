@@ -16,6 +16,7 @@ public class RabbitMQConfig {
     public static final String ROUTING_KEY_RESERVATION_CREATED = "reservation.created";
     public static final String ROUTING_KEY_RESERVATION_DELETED = "reservation.deleted";
     public static final String ROUTING_KEY_RESERVATION_PRICED = "reservation.priced";
+    public static final String ROUTING_KEY_RESERVATION_STATUS_CHANGED = "reservation.status.changed";
     public static final String FANOUT_EXCHANGE = "reservation-fanout";
 
 

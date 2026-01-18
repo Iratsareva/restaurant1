@@ -15,6 +15,7 @@ import com.example.demo.repository.ReservationRepository;
 import com.example.demo.repository.TableRepository;
 import org.example.restaurant.events.ReservationCreatedEvent;
 import org.example.restaurant.events.ReservationDeletedEvent;
+import org.example.restaurant.events.ReservationStatusChangedEvent;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -235,9 +236,12 @@ public class ReservationService {
      * Изменяет статус бронирования с валидацией допустимых переходов
      * 
      * Допустимые переходы:
-     * - PENDING -> CONFIRMED (клиент подтвердил/оплатил)
+     * - PENDING -> CONFIRMED (клиент подтвердил)
+     * - PENDING -> PAID (клиент сразу оплатил)
      * - PENDING -> CANCELLED (клиент отменил или автоматически)
+     * - CONFIRMED -> PAID (клиент оплатил после подтверждения)
      * - CONFIRMED -> CANCELLED (клиент отменил после подтверждения)
+     * - PAID -> CANCELLED (клиент отменил после оплаты)
      * 
      * @param id ID бронирования
      * @param newStatus Новый статус
@@ -255,7 +259,7 @@ public class ReservationService {
         if (!isValidStatusTransition(currentStatus, newStatus)) {
             throw new IllegalArgumentException(
                 String.format("Недопустимый переход статуса: %s -> %s. " +
-                    "Допустимые переходы: PENDING -> CONFIRMED/PAID/CANCELLED, CONFIRMED/PAID -> CANCELLED",
+                    "Допустимые переходы: PENDING -> CONFIRMED/PAID/CANCELLED, CONFIRMED -> PAID/CANCELLED, PAID -> CANCELLED",
                     currentStatus, newStatus)
             );
         }
@@ -270,6 +274,23 @@ public class ReservationService {
         reservation = reservationRepository.update(reservation);
         
         log.info("Статус бронирования изменен: reservationId={}, {} -> {}", id, currentStatus, newStatus);
+        
+        // Публикуем событие изменения статуса
+        ReservationStatusChangedEvent statusEvent = new ReservationStatusChangedEvent(
+                reservation.getId(),
+                reservation.getClient().getId(),
+                currentStatus,
+                newStatus
+        );
+        
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.EXCHANGE_NAME,
+                RabbitMQConfig.ROUTING_KEY_RESERVATION_STATUS_CHANGED,
+                statusEvent
+        );
+        
+        log.info("Reservation status changed event published: reservationId={}, {} -> {}", 
+                reservation.getId(), currentStatus, newStatus);
         
         return toResponse(reservation);
     }
@@ -287,8 +308,13 @@ public class ReservationService {
             return "CONFIRMED".equals(next) || "PAID".equals(next) || "CANCELLED".equals(next);
         }
         
-        // CONFIRMED или PAID может перейти только в CANCELLED
-        if ("CONFIRMED".equals(current) || "PAID".equals(current)) {
+        // CONFIRMED может перейти в PAID или CANCELLED
+        if ("CONFIRMED".equals(current)) {
+            return "PAID".equals(next) || "CANCELLED".equals(next);
+        }
+        
+        // PAID может перейти только в CANCELLED
+        if ("PAID".equals(current)) {
             return "CANCELLED".equals(next);
         }
         
