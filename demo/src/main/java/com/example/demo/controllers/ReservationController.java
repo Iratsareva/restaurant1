@@ -59,6 +59,11 @@ public class ReservationController implements ReservationApi {
     }
 
     @Override
+    public EntityModel<ReservationResponse> updateReservationStatus(Long id, String status) {
+        return assembler.toModel(reservationService.changeStatus(id, status));
+    }
+
+    @Override
     public void deleteReservation(Long id) {
         reservationService.delete(id);
     }

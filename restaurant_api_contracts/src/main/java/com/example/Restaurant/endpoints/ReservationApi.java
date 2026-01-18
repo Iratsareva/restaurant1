@@ -55,6 +55,16 @@ public interface ReservationApi {
     @PutMapping("/{id}")
     EntityModel<ReservationResponse> updateReservation(@PathVariable Long id, @Valid @RequestBody UpdateReservationRequest request);
 
+    @Operation(summary = "Изменить статус бронирования", 
+               description = "Изменяет статус бронирования. Допустимые переходы: PENDING -> CONFIRMED/PAID/CANCELLED, CONFIRMED/PAID -> CANCELLED")
+    @ApiResponse(responseCode = "200", description = "Статус успешно изменен")
+    @ApiResponse(responseCode = "400", description = "Недопустимый переход статуса", content = @Content(schema = @Schema(implementation = StatusResponse.class)))
+    @ApiResponse(responseCode = "404", description = "Бронирование не найдено", content = @Content(schema = @Schema(implementation = StatusResponse.class)))
+    @PatchMapping("/{id}/status")
+    EntityModel<ReservationResponse> updateReservationStatus(
+            @PathVariable("id") Long id,
+            @Parameter(description = "Новый статус (CONFIRMED, PAID, CANCELLED)") @RequestParam("status") String status);
+
     @Operation(summary = "Удалить бронирование по ID")
     @ApiResponse(responseCode = "204", description = "Бронирование успешно удалено")
     @ApiResponse(responseCode = "404", description = "Бронирование не найдено")

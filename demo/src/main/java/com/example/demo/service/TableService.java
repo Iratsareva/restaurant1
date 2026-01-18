@@ -39,6 +39,10 @@ public class TableService {
         table.setNumber(request.number());
         table.setNumberOfSeats(request.numberOfSeats());
         table.setAvailable(true); // По умолчанию доступен
+        // Если тип не указан, устанавливаем "STANDARD" по умолчанию
+        table.setType(request.type() != null && !request.type().isBlank() 
+                ? request.type() 
+                : "STANDARD");
         table = tableRepository.create(table);
         return toResponse(table);
     }
@@ -84,6 +88,10 @@ public class TableService {
     }
 
     private TableResponse toResponse(TableEntity table) {
-        return new TableResponse(table.getId(), table.getNumber(),   table.getNumberOfSeats(),table.getType(), table.isAvailable());
+        // Если тип null, возвращаем "STANDARD" для отображения
+        String tableType = table.getType() != null && !table.getType().isBlank() 
+                ? table.getType() 
+                : "STANDARD";
+        return new TableResponse(table.getId(), table.getNumber(), table.getNumberOfSeats(), tableType, table.isAvailable());
     }
 }

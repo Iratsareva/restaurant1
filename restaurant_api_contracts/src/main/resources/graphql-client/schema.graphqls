@@ -18,6 +18,7 @@ type Mutation {
     deleteTable(id: ID!): ID
     createReservation(input: ReservationInput!): Reservation
     updateReservation(id: ID!, input: UpdateReservationInput!): Reservation
+    updateReservationStatus(id: ID!, status: String!): Reservation  # Изменение статуса бронирования
     deleteReservation(id: ID!): ID
 }
 

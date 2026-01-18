@@ -50,6 +50,11 @@ public class ReservationDataFetcher {
     }
 
     @DgsMutation
+    public ReservationResponse updateReservationStatus(@InputArgument Long id, @InputArgument String status) {
+        return reservationService.changeStatus(id, status);
+    }
+
+    @DgsMutation
     public Long deleteReservation(@InputArgument Long id) {
         reservationService.delete(id);
         return id;

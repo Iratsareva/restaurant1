@@ -2,6 +2,7 @@ package com.example.demo.models;
 
 
 import jakarta.persistence.*;
+import jakarta.persistence.PrePersist;
 import lombok.*;
 import java.time.LocalDateTime;
 
@@ -34,5 +35,15 @@ public class Reservation {
 
     @Column(name = "price")
     private double price = 0.0;
+
+    @Column(name = "created_at", nullable = true, updatable = false)
+    private LocalDateTime createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
+    }
 
 }

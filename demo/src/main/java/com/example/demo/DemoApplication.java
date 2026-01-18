@@ -7,8 +7,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.data.web.PagedResourcesAssembler;
 import org.springframework.hateoas.config.EnableHypermediaSupport;
 
-@SpringBootApplication (scanBasePackages = {"com.example.demo", "org.example.reservationprice"})
+@SpringBootApplication (scanBasePackages = {"com.example.demo", "org.example.reservationprice", "com.example.Restaurant"})
 @EnableHypermediaSupport(type = EnableHypermediaSupport.HypermediaType.HAL)
+@org.springframework.scheduling.annotation.EnableScheduling
 public class DemoApplication {
 
 	public static void main(String[] args) {

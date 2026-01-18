@@ -3,6 +3,7 @@ package com.example.demo.service;
 
 
 import com.example.Restaurant.dto.*;
+import com.example.Restaurant.exception.ConflictException;
 import com.example.Restaurant.exception.ResourceNotFoundException;
 
 import com.example.demo.config.RabbitMQConfig;
@@ -16,6 +17,12 @@ import org.example.restaurant.events.ReservationCreatedEvent;
 import org.example.restaurant.events.ReservationDeletedEvent;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import net.devh.boot.grpc.client.inject.GrpcClient;
+import org.example.reservationprice.PriceRequest;
+import org.example.reservationprice.PriceResponse;
+import org.example.reservationprice.ReservationPriceServiceGrpc;
+import io.grpc.StatusRuntimeException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -35,6 +42,9 @@ public class ReservationService {
     private final ClientService clientService;
     private final TableService tableService;
     private final RabbitTemplate rabbitTemplate; // Добавляем RabbitTemplate
+    
+    @GrpcClient("reservation-price-service")
+    private ReservationPriceServiceGrpc.ReservationPriceServiceBlockingStub priceServiceStub;
 
 
 
@@ -49,6 +59,7 @@ public class ReservationService {
         this.rabbitTemplate = rabbitTemplate;
     }
 
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public PagedResponse<ReservationResponse> findAll(Long clientId, Long tableId, String status,String tableType, int page, int size) {
         List<Reservation> reservations;
         if (clientId != null) {
@@ -67,7 +78,11 @@ public class ReservationService {
         int totalPages = (int) Math.ceil((double) totalElements / size);
         int from = page * size;
         int to = Math.min(from + size, totalElements);
-        List<Reservation> pageContent = reservations.subList(from, to);
+        
+        // Защита от IndexOutOfBoundsException при пустом списке
+        List<Reservation> pageContent = (from >= totalElements || from < 0) 
+                ? List.of() 
+                : reservations.subList(from, to);
 
         List<ReservationResponse> content = pageContent.stream().map(this::toResponse).collect(Collectors.toList());
         boolean last = page >= totalPages - 1;
@@ -100,16 +115,16 @@ public class ReservationService {
         }
 
         if (!tableEntity.isAvailable()) {
-            throw new RuntimeException("Table not available");
+            throw new ConflictException("Стол недоступен для бронирования");
         }
         if (request.numberOfGuests() > tableEntity.getNumberOfSeats()) {
-            throw new RuntimeException("Guests exceed seats");
+            throw new IllegalArgumentException("Количество гостей превышает количество мест за столом");
         }
 
         LocalDateTime endTime = request.reservationTime().plus(RESERVATION_DURATION);
         List<Reservation> overlapping = reservationRepository.findOverlapping(request.tableId(), request.reservationTime(), endTime);
         if (!overlapping.isEmpty()) {
-            throw new RuntimeException("Overlapping reservation");
+            throw new ConflictException("Стол уже забронирован на указанное время");
         }
 
         Reservation reservation = new Reservation();
@@ -118,19 +133,52 @@ public class ReservationService {
         reservation.setReservationTime(request.reservationTime());
         reservation.setNumberOfGuests(request.numberOfGuests());
         reservation.setStatus("PENDING");
+        reservation.setCreatedAt(LocalDateTime.now()); // Устанавливаем время создания
 
         // Сначала сохраняем, чтобы получить ID
         reservation = reservationRepository.create(reservation);
 
-        // Публикуем событие создания БЕЗ цены (цена будет рассчитана асинхронно Price Client)
-        // Price Client слушает это событие, вызывает gRPC Price Server и публикует ReservationPricedEvent
+        // СИНХРОННЫЙ расчет цены при создании, чтобы сразу вернуть цену в ответе
+        try {
+            if (priceServiceStub != null) {
+                String tableType = tableEntity.getType() != null && !tableEntity.getType().isBlank() 
+                        ? tableEntity.getType() 
+                        : "STANDARD";
+                
+                PriceRequest priceRequest = PriceRequest.newBuilder()
+                        .setReservationId(reservation.getId())
+                        .setNumberOfGuests(reservation.getNumberOfGuests())
+                        .setTableType(tableType)
+                        .setDurationHours(2) // Фиксированная продолжительность
+                        .build();
+
+                PriceResponse priceResponse = priceServiceStub.calculatePrice(priceRequest);
+                reservation.setPrice(priceResponse.getPrice());
+                reservation = reservationRepository.update(reservation);
+                
+                log.info("Price calculated synchronously for reservationId={}, price={}", 
+                        reservation.getId(), priceResponse.getPrice());
+            } else {
+                log.warn("gRPC price service stub is not available, price will be calculated asynchronously");
+            }
+        } catch (StatusRuntimeException e) {
+            log.error("Error calculating price synchronously for reservationId={}: {}", 
+                    reservation.getId(), e.getStatus(), e);
+            // Продолжаем без цены, цена будет рассчитана асинхронно
+        } catch (Exception e) {
+            log.error("Unexpected error calculating price synchronously for reservationId={}: {}", 
+                    reservation.getId(), e.getMessage(), e);
+            // Продолжаем без цены, цена будет рассчитана асинхронно
+        }
+
+        // Публикуем событие создания (для асинхронных подписчиков: notification, audit)
         ReservationCreatedEvent event = new ReservationCreatedEvent(
                 reservation.getId(),
                 clientEntity.getId(),
                 clientEntity.getName(),
                 tableEntity.getId(),
                 tableEntity.getNumber(),
-                tableEntity.getType() != null ? tableEntity.getType() : "STANDARD",  // Передаем тип стола для расчета цены
+                tableEntity.getType() != null ? tableEntity.getType() : "STANDARD",
                 reservation.getReservationTime(),
                 reservation.getNumberOfGuests()
         );
@@ -141,9 +189,7 @@ public class ReservationService {
                 event
         );
 
-        log.info("Reservation created event published: reservationId={}, waiting for price calculation", reservation.getId());
-
-
+        log.info("Reservation created event published: reservationId={}", reservation.getId());
 
         return toResponse(reservation);
     }
@@ -157,14 +203,14 @@ public class ReservationService {
         TableEntity tableEntity = reservation.getTable();
 
         if (request.numberOfGuests() > tableEntity.getNumberOfSeats()) {
-            throw new RuntimeException("Guests exceed seats");
+            throw new IllegalArgumentException("Количество гостей превышает количество мест за столом");
         }
 
         LocalDateTime endTime = request.reservationTime().plus(RESERVATION_DURATION);
         List<Reservation> overlapping = reservationRepository.findOverlapping(tableEntity.getId(), request.reservationTime(), endTime);
         overlapping.removeIf(r -> r.getId().equals(id)); // Исключаем само бронирование
         if (!overlapping.isEmpty()) {
-            throw new RuntimeException("Overlapping reservation");
+            throw new ConflictException("Стол уже забронирован на указанное время");
         }
 
         reservation.setReservationTime(request.reservationTime());
@@ -183,6 +229,113 @@ public class ReservationService {
 
         reservation = reservationRepository.update(reservation);
         return toResponse(reservation);
+    }
+
+    /**
+     * Изменяет статус бронирования с валидацией допустимых переходов
+     * 
+     * Допустимые переходы:
+     * - PENDING -> CONFIRMED (клиент подтвердил/оплатил)
+     * - PENDING -> CANCELLED (клиент отменил или автоматически)
+     * - CONFIRMED -> CANCELLED (клиент отменил после подтверждения)
+     * 
+     * @param id ID бронирования
+     * @param newStatus Новый статус
+     * @return Обновленное бронирование
+     */
+    public ReservationResponse changeStatus(Long id, String newStatus) {
+        Reservation reservation = reservationRepository.findById(id);
+        if (reservation == null) {
+            throw new ResourceNotFoundException("Reservation", id);
+        }
+
+        String currentStatus = reservation.getStatus();
+        
+        // Валидация переходов статусов
+        if (!isValidStatusTransition(currentStatus, newStatus)) {
+            throw new IllegalArgumentException(
+                String.format("Недопустимый переход статуса: %s -> %s. " +
+                    "Допустимые переходы: PENDING -> CONFIRMED/PAID/CANCELLED, CONFIRMED/PAID -> CANCELLED",
+                    currentStatus, newStatus)
+            );
+        }
+
+        // Проверка, что статус не тот же самый
+        if (currentStatus.equals(newStatus)) {
+            log.warn("Попытка изменить статус на тот же самый: reservationId={}, status={}", id, newStatus);
+            return toResponse(reservation);
+        }
+
+        reservation.setStatus(newStatus);
+        reservation = reservationRepository.update(reservation);
+        
+        log.info("Статус бронирования изменен: reservationId={}, {} -> {}", id, currentStatus, newStatus);
+        
+        return toResponse(reservation);
+    }
+
+    /**
+     * Проверяет, допустим ли переход между статусами
+     */
+    private boolean isValidStatusTransition(String currentStatus, String newStatus) {
+        // Нормализуем статусы (приводим к верхнему регистру)
+        String current = currentStatus != null ? currentStatus.toUpperCase() : "";
+        String next = newStatus != null ? newStatus.toUpperCase() : "";
+
+        // PENDING может перейти в CONFIRMED, PAID или CANCELLED
+        if ("PENDING".equals(current)) {
+            return "CONFIRMED".equals(next) || "PAID".equals(next) || "CANCELLED".equals(next);
+        }
+        
+        // CONFIRMED или PAID может перейти только в CANCELLED
+        if ("CONFIRMED".equals(current) || "PAID".equals(current)) {
+            return "CANCELLED".equals(next);
+        }
+        
+        // CANCELLED - финальный статус, нельзя изменить
+        if ("CANCELLED".equals(current)) {
+            return false;
+        }
+        
+        // Для неизвестных статусов разрешаем переход (на случай расширения)
+        return true;
+    }
+
+    /**
+     * Автоматически отменяет бронирования со статусом PENDING, которые не были подтверждены за 24 часа
+     */
+    public int cancelExpiredPendingReservations() {
+        List<Reservation> pendingReservations = reservationRepository.findByStatus("PENDING");
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expirationTime = now.minusHours(24); // 24 часа назад
+        int cancelledCount = 0;
+
+        for (Reservation reservation : pendingReservations) {
+            // Проверяем, прошло ли 24 часа с момента создания
+            LocalDateTime createdAt = reservation.getCreatedAt();
+            if (createdAt == null) {
+                // Fallback: если createdAt не установлен, используем reservationTime
+                createdAt = reservation.getReservationTime().minus(RESERVATION_DURATION);
+            }
+            
+            if (createdAt.isBefore(expirationTime)) {
+                try {
+                    changeStatus(reservation.getId(), "CANCELLED");
+                    cancelledCount++;
+                    log.info("Автоматически отменено просроченное бронирование: reservationId={}, createdAt={}", 
+                            reservation.getId(), createdAt);
+                } catch (Exception e) {
+                    log.error("Ошибка при автоматической отмене бронирования: reservationId={}", 
+                            reservation.getId(), e);
+                }
+            }
+        }
+
+        if (cancelledCount > 0) {
+            log.info("Автоматически отменено {} просроченных бронирований", cancelledCount);
+        }
+        
+        return cancelledCount;
     }
 
     public void delete(Long id) {
@@ -214,7 +367,13 @@ public class ReservationService {
         TableEntity tableEntity = reservation.getTable();
 
         ClientResponse client = new ClientResponse(clientEntity.getId(), clientEntity.getName(), clientEntity.getEmail(), clientEntity.getPhone());
-        TableResponse table = new TableResponse(tableEntity.getId(), tableEntity.getNumber(), tableEntity.getNumberOfSeats(), tableEntity.getType(), tableEntity.isAvailable());
+        
+        // Обрабатываем null тип стола - устанавливаем "STANDARD" по умолчанию
+        String tableType = tableEntity.getType() != null && !tableEntity.getType().isBlank() 
+                ? tableEntity.getType() 
+                : "STANDARD";
+        
+        TableResponse table = new TableResponse(tableEntity.getId(), tableEntity.getNumber(), tableEntity.getNumberOfSeats(), tableType, tableEntity.isAvailable());
 
         return new ReservationResponse(reservation.getId(), client, table, reservation.getReservationTime(), reservation.getNumberOfGuests(), reservation.getStatus(), reservation.getPrice());
     }

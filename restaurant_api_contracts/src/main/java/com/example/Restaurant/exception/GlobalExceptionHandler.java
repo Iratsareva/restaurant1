@@ -29,4 +29,18 @@ public class GlobalExceptionHandler {
                 .body(new StatusResponse("error", errorMessage));
     }
 
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<StatusResponse> handleConflict(ConflictException ex) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new StatusResponse("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<StatusResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new StatusResponse("error", ex.getMessage()));
+    }
+
 }

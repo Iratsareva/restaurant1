@@ -8,8 +8,10 @@ import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Repository;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Repository
 public class ReservationRepositoryImpl extends AbstractRepository<Reservation> implements ReservationRepository {
@@ -44,14 +46,25 @@ public class ReservationRepositoryImpl extends AbstractRepository<Reservation> i
 
     @Override
     public List<Reservation> findOverlapping(Long tableId, LocalDateTime start, LocalDateTime end) {
+        // Проверяем пересечения: новое бронирование пересекается с существующим, если:
+        // (start < existing_end) AND (end > existing_start)
+        // Где existing_start = r.reservationTime, existing_end = r.reservationTime + 2 часа
+        // Упрощенная проверка: r.reservationTime < end AND (r.reservationTime + 2 часа) > start
+        // Используем простую проверку в Java, так как TIMESTAMPADD может не работать во всех БД
         TypedQuery<Reservation> query = entityManager.createQuery(
                 "SELECT r FROM Reservation r " +
                         "WHERE r.table.id = :tableId " +
-                        "AND r.reservationTime BETWEEN :start AND :end", Reservation.class);
-        return query.setParameter("tableId", tableId)
-                .setParameter("start", start)
+                        "AND r.status != 'CANCELLED' " +  // Исключаем отмененные бронирования
+                        "AND r.reservationTime < :end", Reservation.class);
+        List<Reservation> candidates = query.setParameter("tableId", tableId)
                 .setParameter("end", end)
                 .getResultList();
+        
+        // Фильтруем в Java: проверяем, что (r.reservationTime + 2 часа) > start
+        Duration twoHours = Duration.ofHours(2);
+        return candidates.stream()
+                .filter(r -> r.getReservationTime().plus(twoHours).isAfter(start))
+                .collect(Collectors.toList());
     }
 
 

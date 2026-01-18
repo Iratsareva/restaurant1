@@ -11,6 +11,7 @@ import org.springframework.amqp.rabbit.annotation.Queue;
 import org.springframework.amqp.rabbit.annotation.QueueBinding;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class ReservationPriceUpdateListener {
@@ -34,6 +35,7 @@ public class ReservationPriceUpdateListener {
                     key = RabbitMQConfig.ROUTING_KEY_RESERVATION_PRICED  // Topic routing key для обновления цены в БД
             )
     )
+    @Transactional
     public void handleReservationPriced(ReservationPricedEvent event) {
         log.info("Demo service: Получено событие расчета цены: reservationId={}, price={}, verdict={}", 
                 event.reservationId(), event.price(), event.verdict());
@@ -52,6 +54,7 @@ public class ReservationPriceUpdateListener {
         } catch (Exception e) {
             log.error("Demo service: Ошибка при обновлении цены для reservationId={}", 
                     event.reservationId(), e);
+            throw e; // Пробрасываем исключение, чтобы RabbitMQ мог обработать его (retry или DLQ)
         }
     }
 }
